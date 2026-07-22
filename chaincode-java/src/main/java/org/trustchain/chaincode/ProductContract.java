@@ -34,8 +34,6 @@ public final class ProductContract implements ContractInterface {
 
     private static final String PRODUCT_PREFIX = "PRODUCT_";
 
-    // ---------- helpers ----------
-
     private enum ProductError {
         PRODUCT_NOT_FOUND,
         PRODUCT_ALREADY_EXISTS,
@@ -56,11 +54,6 @@ public final class ProductContract implements ContractInterface {
         return genson.deserialize(state, Product.class);
     }
 
-    // ---------- transactions ----------
-
-    /**
-     * Creates a new product on the ledger. Called by a Manufacturer/Supplier.
-     */
     @Transaction(intent = Transaction.TYPE.SUBMIT)
     public Product CreateProduct(final Context ctx,
                                   final String productId,
@@ -83,7 +76,7 @@ public final class ProductContract implements ContractInterface {
                 name,
                 batchNumber,
                 manufacturerId,
-                manufacturerId,      // owner starts as the manufacturer
+                manufacturerId,
                 "MANUFACTURER",
                 "CREATED",
                 now,
@@ -92,19 +85,11 @@ public final class ProductContract implements ContractInterface {
         );
 
         stub.putStringState(productKey(productId), genson.serialize(product));
-
-        // Emit event so the Spring Boot backend can sync MongoDB via block/chaincode events
         stub.setEvent("ProductCreated", genson.serialize(product).getBytes(StandardCharsets.UTF_8));
 
         return product;
     }
 
-    /**
-     * Transfers ownership of a product to the next participant in the chain
-     * (Manufacturer -> Wholesaler -> Retailer -> Consumer).
-     * `callerId` / `callerRole` come from the backend, which has already
-     * authenticated the user and validated their role via RBAC.
-     */
     @Transaction(intent = Transaction.TYPE.SUBMIT)
     public Product TransferOwnership(final Context ctx,
                                       final String productId,
@@ -137,33 +122,17 @@ public final class ProductContract implements ContractInterface {
         return product;
     }
 
-    /**
-     * Read-only: fetch current state of a product.
-     */
     @Transaction(intent = Transaction.TYPE.EVALUATE)
     public Product GetProduct(final Context ctx, final String productId) {
         return readProduct(ctx.getStub(), productId);
     }
 
-    /**
-     * Read-only: reconstructs the full lifecycle/history of a product by walking
-     * the key's modification history on the ledger (this is what "scan the QR code"
-     * ultimately calls on the consumer-facing endpoint).
-     */
     @Transaction(intent = Transaction.TYPE.EVALUATE)
     public String GetProductHistory(final Context ctx, final String productId) {
         ChaincodeStub stub = ctx.getStub();
-
-        // Ensure the product exists first (throws if not)
         readProduct(stub, productId);
 
         List<TransferRecord> history = new ArrayList<>();
-        QueryResultsIteratorWrapper(stub, productId, history);
-
-        return genson.serialize(history);
-    }
-
-    private void QueryResultsIteratorWrapper(ChaincodeStub stub, String productId, List<TransferRecord> history) {
         try (var results = stub.getHistoryForKey(productKey(productId))) {
             for (KeyModification mod : results) {
                 if (mod.isDeleted()) {
@@ -172,7 +141,7 @@ public final class ProductContract implements ContractInterface {
                 Product snapshot = genson.deserialize(mod.getStringValue(), Product.class);
                 history.add(new TransferRecord(
                         mod.getTxId(),
-                        null, // "fromOwner" can be derived client-side by comparing consecutive snapshots
+                        null,
                         snapshot.getCurrentOwnerId(),
                         snapshot.getCurrentOwnerRole(),
                         snapshot.getStatus(),
@@ -180,5 +149,6 @@ public final class ProductContract implements ContractInterface {
                 ));
             }
         }
+        return genson.serialize(history);
     }
 }

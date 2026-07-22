@@ -1,0 +1,17 @@
+# Maven target directories
+target/
+**/target/
+
+# Node dependencies & dist
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# IDE / OS files
+.DS_Store
+.idea/
+*.iws
+*.iml
+.vscode/
+*.log

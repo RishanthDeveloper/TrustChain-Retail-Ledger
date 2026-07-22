@@ -10,53 +10,50 @@ import org.hyperledger.fabric.client.identity.Identities;
 import org.hyperledger.fabric.client.identity.Identity;
 import org.hyperledger.fabric.client.identity.Signer;
 import org.hyperledger.fabric.client.identity.Signers;
+import org.slf.Logger;
+import org.slf.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import javax.annotation.PostConstruct;
 import javax.annotation.PreDestroy;
-import java.io.IOException;
 import java.io.Reader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
-import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
-import java.security.spec.InvalidKeySpecException;
 import java.util.concurrent.TimeUnit;
 
-/**
- * Central point of contact between the REST layer and the Fabric network.
- * Wraps a single long-lived Gateway connection scoped to this backend
- * instance's identity (typically an admin/app identity for Org1).
- */
 @Service
 public class FabricGatewayService {
 
-    @Value("${fabric.mspId}")
+    private static final Logger log = LoggerFactory.getLogger(FabricGatewayService.class);
+
+    @Value("${fabric.enabled:false}")
+    private boolean fabricEnabled;
+
+    @Value("${fabric.mspId:Org1MSP}")
     private String mspId;
 
-    @Value("${fabric.certPath}")
+    @Value("${fabric.certPath:}")
     private String certPath;
 
-    @Value("${fabric.keyPath}")
+    @Value("${fabric.keyPath:}")
     private String keyPath;
 
-    @Value("${fabric.tlsCertPath}")
+    @Value("${fabric.tlsCertPath:}")
     private String tlsCertPath;
 
-    @Value("${fabric.peerEndpoint}")
+    @Value("${fabric.peerEndpoint:localhost:7051}")
     private String peerEndpoint;
 
-    @Value("${fabric.overrideAuth}")
+    @Value("${fabric.overrideAuth:peer0.org1.example.com}")
     private String overrideAuth;
 
-    @Value("${fabric.channelName}")
+    @Value("${fabric.channelName:mychannel}")
     private String channelName;
 
-    @Value("${fabric.chaincodeName}")
+    @Value("${fabric.chaincodeName:productcontract}")
     private String chaincodeName;
 
     private ManagedChannel channel;
@@ -64,16 +61,28 @@ public class FabricGatewayService {
     private Contract contract;
 
     @PostConstruct
-    public void init() throws Exception {
-        channel = newGrpcChannel();
-        Gateway.Builder builder = Gateway.newInstance()
-                .identity(newIdentity())
-                .signer(newSigner())
-                .connection(channel);
+    public void init() {
+        if (!fabricEnabled) {
+            log.info("Fabric Gateway is DISABLED. Running backend in Dev Mock Ledger Mode.");
+            return;
+        }
 
-        gateway = builder.connect();
-        Network network = gateway.getNetwork(channelName);
-        contract = network.getContract(chaincodeName, "ProductContract");
+        try {
+            log.info("Connecting to Hyperledger Fabric network at {}...", peerEndpoint);
+            channel = newGrpcChannel();
+            Gateway.Builder builder = Gateway.newInstance()
+                    .identity(newIdentity())
+                    .signer(newSigner())
+                    .connection(channel);
+
+            gateway = builder.connect();
+            Network network = gateway.getNetwork(channelName);
+            contract = network.getContract(chaincodeName, "ProductContract");
+            log.info("Successfully connected to Fabric network channel: {}", channelName);
+        } catch (Exception e) {
+            log.warn("Failed to connect to Fabric network: {}. Falling back to Dev Mock Ledger Mode.", e.getMessage());
+            this.fabricEnabled = false;
+        }
     }
 
     @PreDestroy
@@ -82,13 +91,15 @@ public class FabricGatewayService {
         if (channel != null) channel.shutdownNow().awaitTermination(5, TimeUnit.SECONDS);
     }
 
+    public boolean isFabricEnabled() {
+        return fabricEnabled;
+    }
+
     public Contract getContract() {
         return contract;
     }
 
-    // ---- identity / TLS plumbing ----
-
-    private ManagedChannel newGrpcChannel() throws IOException, CertificateException {
+    private ManagedChannel newGrpcChannel() throws Exception {
         X509Certificate tlsCert;
         try (Reader r = Files.newBufferedReader(Path.of(tlsCertPath))) {
             tlsCert = Identities.readX509Certificate(r);
@@ -101,14 +112,14 @@ public class FabricGatewayService {
                 .build();
     }
 
-    private Identity newIdentity() throws IOException, CertificateException {
+    private Identity newIdentity() throws Exception {
         try (Reader r = Files.newBufferedReader(Path.of(certPath))) {
             X509Certificate cert = Identities.readX509Certificate(r);
             return new org.hyperledger.fabric.client.identity.X509Identity(mspId, cert);
         }
     }
 
-    private Signer newSigner() throws IOException, InvalidKeySpecException, NoSuchAlgorithmException {
+    private Signer newSigner() throws Exception {
         try (Reader r = Files.newBufferedReader(Path.of(keyPath))) {
             PrivateKey key = Identities.readPrivateKey(r);
             return Signers.newPrivateKeySigner(key);

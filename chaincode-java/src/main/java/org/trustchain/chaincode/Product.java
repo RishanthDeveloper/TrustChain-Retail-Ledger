@@ -4,8 +4,6 @@ import com.owlike.genson.annotation.JsonProperty;
 import org.hyperledger.fabric.contract.annotation.DataType;
 import org.hyperledger.fabric.contract.annotation.Property;
 
-import java.util.List;
-
 /**
  * Represents a single product "digital twin" on the ledger.
  * Stored as JSON under key: PRODUCT_<productId>
